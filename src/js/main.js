@@ -68,11 +68,11 @@ class GreenAudioPlayer {
             this.downloadLink.setAttribute('title', this.labels.download);
         }
 
-        if (opts.outlineControls || false) {
+        if (opts.outlineControls) {
             this.audioPlayer.classList.add('player-accessible');
         }
 
-        if (opts.showDownloadButton || false) {
+        if (opts.showDownloadButton) {
             this.showDownload();
         }
 
