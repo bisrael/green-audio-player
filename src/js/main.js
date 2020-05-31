@@ -77,6 +77,7 @@ class GreenAudioPlayer {
         }
 
         this.initEvents();
+        this.setPlayerDefaults();
         this.directionAware();
         this.overcomeIosLimitations();
 
@@ -107,6 +108,41 @@ class GreenAudioPlayer {
             /* eslint-disable no-new */
             new GreenAudioPlayer(player, options);
         });
+    }
+
+    static parseUrlTime(player) {
+        const match = player.currentSrc.match(/t=([^&]+)/);
+
+        if (!match) {
+            return [0, player.duration];
+        }
+
+        const [split, split2] = match[1].split(',');
+
+        const multi = [1, 60, 3600, 24];
+        const parseTime = (str) => {
+            const a = str.split(':');
+            let t = 0;
+
+            for (let i = 0, l = a.length; i < l; ++i) {
+                t += parseFloat(a[l - i - 1]) * multi[i];
+            }
+
+            return t;
+        };
+
+        // note we take the min of the parsed time and the actual duration to prevent overflows
+        // past in our calculations.
+        return [
+            parseTime(split),
+            split2 ? Math.min(player.duration, parseTime(split2)) : player.duration,
+        ];
+    }
+
+    static parseUrlDuration(player) {
+        const [minTime, maxTime] = GreenAudioPlayer.parseUrlTime(player);
+
+        return maxTime - minTime;
     }
 
     static getTemplate() {
@@ -161,90 +197,101 @@ class GreenAudioPlayer {
         `;
     }
 
-    initEvents() {
-        const self = this;
+    handleDrag(event) {
+        let movename = 'mousemove';
+        let upname = 'mouseup';
 
-        self.audioPlayer.addEventListener('mousedown', (event) => {
-            if (self.isDraggable(event.target)) {
-                self.currentlyDragged = event.target;
-                const handleMethod = self.currentlyDragged.dataset.method;
-                const listener = self[handleMethod].bind(self);
-                window.addEventListener('mousemove', listener, false);
-                if (self.currentlyDragged.parentElement.parentElement === self.sliders[0]) {
-                    self.paused = self.player.paused;
-                    if (self.paused === false) self.togglePlay();
-                }
-                window.addEventListener('mouseup', () => {
-                    if (self.currentlyDragged !== false
-                        && self.currentlyDragged.parentElement.parentElement === self.sliders[0]
-                        && self.paused !== self.player.paused) {
-                        self.togglePlay();
-                    }
-                    self.currentlyDragged = false;
-                    window.removeEventListener('mousemove', listener, false);
-                }, false);
+        const touching = event.name === 'touchstart';
+
+        if (touching) {
+            movename = 'touchmove';
+            upname = 'touchend';
+        }
+
+        if (this.isDraggable(event.target)) {
+            let handleMethod;
+
+            if (touching) {
+                [this.currentlyDragged] = event.targetTouches;
+                handleMethod = this.currentlyDragged.target.dataset.method;
+            } else {
+                this.currentlyDragged = event.target;
+                handleMethod = this.currentlyDragged.dataset.method;
             }
-        });
 
-        // for mobile touches
-        self.audioPlayer.addEventListener('touchstart', (event) => {
-            if (self.isDraggable(event.target)) {
-                [self.currentlyDragged] = event.targetTouches;
-                const handleMethod = self.currentlyDragged.target.dataset.method;
-                const listener = self[handleMethod].bind(self);
-                window.addEventListener('touchmove', listener, false);
-                if (self.currentlyDragged.parentElement.parentElement === self.sliders[0]) {
-                    self.paused = self.player.paused;
-                    if (self.paused === false) self.togglePlay();
+            const listener = ev => this[handleMethod](ev);
+
+            window.addEventListener(movename, listener, false);
+
+            let wasPlayingWhenDragStarted = false;
+            const draggingSlider = this.currentlyDragged &&
+              this.currentlyDragged.parentElement.parentElement === this.sliders[0];
+
+            if (draggingSlider) {
+                wasPlayingWhenDragStarted = !this.player.paused;
+                if (!wasPlayingWhenDragStarted) {
+                    this.player.pause();
                 }
-                window.addEventListener('touchend', () => {
-                    if (self.currentlyDragged !== false
-                        && self.currentlyDragged.parentElement.parentElement === self.sliders[0]
-                        && self.paused !== self.player.paused) {
-                        self.togglePlay();
-                    }
-                    self.currentlyDragged = false;
-                    window.removeEventListener('touchmove', listener, false);
-                }, false);
-
-                event.preventDefault();
             }
-        });
 
-        this.playPauseBtn.addEventListener('click', this.togglePlay.bind(self));
-        this.player.addEventListener('timeupdate', this.updateProgress.bind(self));
-        this.player.addEventListener('volumechange', this.updateVolume.bind(self));
+            // The "up" listener has to remain inlined because it needs to reference the
+            // listener we created just above.
+            // otherwise we can't as easily (and safely) remove it when we stop dragging.
+            // also it lets us access our initial state when we started dragging.
+            window.addEventListener(upname, () => {
+                if (draggingSlider && wasPlayingWhenDragStarted) {
+                    this.player.play();
+                }
+
+                this.currentlyDragged = false;
+
+                window.removeEventListener(movename, listener, false);
+            }, false);
+        }
+    }
+
+    handleMetadataLoad() {
+        const dur = GreenAudioPlayer.parseUrlDuration(this.player);
+        this.totalTime.textContent = GreenAudioPlayer.formatTime(dur);
+    }
+
+    setPlayerDefaults() {
         this.player.volume = 0.81;
-        this.player.addEventListener('loadedmetadata', () => {
-            self.totalTime.textContent = GreenAudioPlayer.formatTime(self.player.duration);
-        });
-        this.player.addEventListener('seeking', this.showLoadingIndicator.bind(self));
-        this.player.addEventListener('seeked', this.hideLoadingIndicator.bind(self));
-        this.player.addEventListener('canplay', this.hideLoadingIndicator.bind(self));
-        this.player.addEventListener('ended', () => {
-            GreenAudioPlayer.pausePlayer(self.player, 'ended');
-            self.player.currentTime = 0;
-            self.playPauseBtn.setAttribute('aria-label', self.labels.play);
-            self.hasSetAttribute(self.playPauseBtn, 'title', self.labels.play);
-        });
+    }
 
-        this.volumeBtn.addEventListener('click', this.showHideVolume.bind(self));
-        window.addEventListener('resize', self.directionAware.bind(self));
-        window.addEventListener('scroll', self.directionAware.bind(self));
+    initEvents() {
+        this.audioPlayer.addEventListener('mousedown', ev => this.handleDrag(ev));
+        this.audioPlayer.addEventListener('touchstart', ev => this.handleDrag(ev));
+
+        this.playPauseBtn.addEventListener('click', this.togglePlay.bind(this));
+
+        this.player.addEventListener('pause', ev => this.handlePause(ev));
+        this.player.addEventListener('play', ev => this.handlePlay(ev));
+
+        this.player.addEventListener('timeupdate', this.updateProgress.bind(this));
+        this.player.addEventListener('volumechange', this.updateVolume.bind(this));
+        this.player.addEventListener('loadedmetadata', ev => this.handleMetadataLoad(ev));
+        this.player.addEventListener('seeking', this.showLoadingIndicator.bind(this));
+        this.player.addEventListener('seeked', this.hideLoadingIndicator.bind(this));
+        this.player.addEventListener('canplay', this.hideLoadingIndicator.bind(this));
+        this.player.addEventListener('ended', ev => this.handleEnded(ev));
+
+        this.volumeBtn.addEventListener('click', this.showHideVolume.bind(this));
+        window.addEventListener('resize', this.directionAware.bind(this));
+        window.addEventListener('scroll', this.directionAware.bind(this));
 
         for (let i = 0; i < this.sliders.length; i++) {
             const pin = this.sliders[i].querySelector('.pin');
-            this.sliders[i].addEventListener('click', self[pin.dataset.method].bind(self));
+            this.sliders[i].addEventListener('click', this[pin.dataset.method].bind(this));
         }
 
-        this.downloadLink.addEventListener('click', this.downloadAudio.bind(self));
+        this.downloadLink.addEventListener('click', this.downloadAudio.bind(this));
     }
 
     overcomeIosLimitations() {
-        const self = this;
         if (this.isDevice) {
             // iOS does not support "canplay" event
-            this.player.addEventListener('loadedmetadata', this.hideLoadingIndicator.bind(self));
+            this.player.addEventListener('loadedmetadata', ev => this.hideLoadingIndicator(ev));
             // iOS does not let "volume" property to be set programmatically
             this.audioPlayer.querySelector('.volume').style.display = 'none';
             this.audioPlayer.querySelector('.controls').style.marginRight = '0';
@@ -287,13 +334,47 @@ class GreenAudioPlayer {
         return true;
     }
 
+    handlePlay() {
+        const playPauseButton = this.player.parentElement.querySelector('.play-pause-btn__icon');
+        playPauseButton.attributes.d.value = 'M0 0h6v24H0zM12 0h6v24h-6z';
+        this.setPlayPauseLabels(this.labels.pause);
+    }
+
+    handlePause() {
+        const playPauseButton = this.player.parentElement.querySelector('.play-pause-btn__icon');
+        playPauseButton.attributes.d.value = 'M18 12L0 24V0';
+        this.setPlayPauseLabels(this.labels.play);
+
+        // eslint-disable-next-line no-unused-vars
+        const [minTime, maxTime] = GreenAudioPlayer.parseUrlTime(this.player);
+
+        if (this.player.currentTime >= maxTime) {
+            this.handleEnded();
+        }
+    }
+
+    handleEnded() {
+        // eslint-disable-next-line no-unused-vars
+        const [minTime, _maxTime] = GreenAudioPlayer.parseUrlTime(this.player);
+        // GreenAudioPlayer.pausePlayer(this.player, 'ended');
+        this.player.currentTime = minTime;
+        this.playPauseBtn.setAttribute('aria-label', this.labels.play);
+        this.hasSetAttribute(this.playPauseBtn, 'title', this.labels.play);
+    }
+
     updateProgress() {
+        const [min, max] = GreenAudioPlayer.parseUrlTime(this.player);
+        const duration = max - min;
         const current = this.player.currentTime;
-        const percent = (current / this.player.duration) * 100;
+        const currentRelativeTime = current - min;
+        const percent = (currentRelativeTime / duration) * 100;
         this.progress.setAttribute('aria-valuenow', percent);
         this.progress.style.width = `${percent}%`;
+        this.currentTime.textContent = GreenAudioPlayer.formatTime(currentRelativeTime);
 
-        this.currentTime.textContent = GreenAudioPlayer.formatTime(current);
+        if (percent > 100) {
+            this.player.pause(); // handlePause will handle the ended state
+        }
     }
 
     updateVolume() {
@@ -348,7 +429,10 @@ class GreenAudioPlayer {
     rewind(event) {
         if (this.player.seekable && this.player.seekable.length) { // no seek if not (pre)loaded
             if (this.inRange(event)) {
-                this.player.currentTime = this.player.duration * this.getCoefficient(event);
+                const [minTime, maxTime] = GreenAudioPlayer.parseUrlTime(this.player);
+                const duration = maxTime - minTime;
+
+                this.player.currentTime = minTime + duration * this.getCoefficient(event);
             }
         }
     }
@@ -398,18 +482,21 @@ class GreenAudioPlayer {
 
     togglePlay() {
         this.preloadNone();
+
         if (this.player.paused) {
             if (this.stopOthersOnPlay) {
                 GreenAudioPlayer.stopOtherPlayers();
             }
-            GreenAudioPlayer.playPlayer(this.player);
-            this.playPauseBtn.setAttribute('aria-label', this.labels.pause);
-            this.hasSetAttribute(this.playPauseBtn, 'title', this.labels.pause);
+
+            this.player.play();
         } else {
-            GreenAudioPlayer.pausePlayer(this.player, 'toggle');
-            this.playPauseBtn.setAttribute('aria-label', this.labels.play);
-            this.hasSetAttribute(this.playPauseBtn, 'title', this.labels.play);
+            this.player.pause();
         }
+    }
+
+    setPlayPauseLabels(label) {
+        this.playPauseBtn.setAttribute('aria-label', label);
+        this.hasSetAttribute(this.playPauseBtn, 'title', label);
     }
 
     hasSetAttribute(el, a, v) {
@@ -420,18 +507,12 @@ class GreenAudioPlayer {
         }
     }
 
-    setCurrentTime(time) {
-        const pos = this.player.currentTime;
-        const end = Math.floor(this.player.duration);
-        if (pos + time < 0 && pos === 0) {
-            this.player.currentTime = this.player.currentTime;
-        } else if (pos + time < 0) {
-            this.player.currentTime = 0;
-        } else if (pos + time > end) {
-            this.player.currentTime = end;
-        } else {
-            this.player.currentTime += time;
-        }
+    incrementCurrentTime(seconds) {
+        const [minTime, maxTime] = GreenAudioPlayer.parseUrlTime(this.player);
+        const newTime = this.player.currentTIme + seconds;
+        // The logic here is to not go under the min or over the max,
+        // not 100%, but presumably we floor the max so we don't cause an issue going past the end?
+        this.player.currentTime = Math.max(Math.min(newTime, Math.floor(maxTime)), minTime);
     }
 
     setVolume(volume) {
@@ -480,9 +561,9 @@ class GreenAudioPlayer {
         case 37: case 39: // horizontal Arrows
             if (document.activeElement === this.sliders[0]) {
                 if (evt.keyCode === 37) {
-                    this.setCurrentTime(-5);
+                    this.incrementCurrentTime(-5);
                 } else {
-                    this.setCurrentTime(+5);
+                    this.incrementCurrentTime(+5);
                 }
                 if (!this.player.paused && this.player.seeking) {
                     this.togglePlay();
@@ -507,24 +588,9 @@ class GreenAudioPlayer {
         }
     }
 
-    static pausePlayer(player) {
-        const playPauseButton = player.parentElement.querySelector('.play-pause-btn__icon');
-        playPauseButton.attributes.d.value = 'M18 12L0 24V0';
-        player.pause();
-    }
-
-    static playPlayer(player) {
-        const playPauseButton = player.parentElement.querySelector('.play-pause-btn__icon');
-        playPauseButton.attributes.d.value = 'M0 0h6v24H0zM12 0h6v24h-6z';
-        player.play();
-    }
-
     static stopOtherPlayers() {
         const players = document.querySelectorAll('.green-audio-player audio');
-
-        for (let i = 0; i < players.length; i++) {
-            GreenAudioPlayer.pausePlayer(players[i]);
-        }
+        players.forEach(player => player.pause());
     }
 
     showLoadingIndicator() {
