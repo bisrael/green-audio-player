@@ -137,7 +137,7 @@ var GreenAudioPlayer = /*#__PURE__*/function () {
 
       var movename = 'mousemove';
       var upname = 'mouseup';
-      var touching = event.name === 'touchstart';
+      var touching = event.type === 'touchstart';
 
       if (touching) {
         movename = 'touchmove';
@@ -157,11 +157,6 @@ var GreenAudioPlayer = /*#__PURE__*/function () {
           handleMethod = this.currentlyDragged.dataset.method;
         }
 
-        var listener = function listener(ev) {
-          return _this[handleMethod](ev);
-        };
-
-        window.addEventListener(movename, listener, false);
         var wasPlayingWhenDragStarted = false;
         var draggingSlider = this.currentlyDragged && this.currentlyDragged.parentElement.parentElement === this.sliders[0];
 
@@ -172,19 +167,31 @@ var GreenAudioPlayer = /*#__PURE__*/function () {
             this.player.pause();
           }
         } // The "up" listener has to remain inlined because it needs to reference the
-        // listener we created just above.
+        // listeners we're making in this event handler method.
         // otherwise we can't as easily (and safely) remove it when we stop dragging.
         // also it lets us access our initial state when we started dragging.
+        // we nee
 
 
-        window.addEventListener(upname, function () {
+        var moveListener = function moveListener(ev) {
+          return _this[handleMethod](ev);
+        };
+
+        var upListener = function upListener() {
+          // do these first in case something else blows up, the player will
+          // keep operating mostly as-expected.
+          window.removeEventListener(movename, moveListener, false);
+          window.removeEventListener(upname, upListener, false); // stop tracking the element we are dragging
+
+          delete _this.currentlyDragged; // resume playback if we were playing when we started dragging
+
           if (draggingSlider && wasPlayingWhenDragStarted) {
             _this.player.play();
           }
+        };
 
-          _this.currentlyDragged = false;
-          window.removeEventListener(movename, listener, false);
-        }, false);
+        window.addEventListener(movename, moveListener, false);
+        window.addEventListener(upname, upListener, false);
       }
     }
   }, {

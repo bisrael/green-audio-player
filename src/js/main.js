@@ -201,7 +201,7 @@ class GreenAudioPlayer {
         let movename = 'mousemove';
         let upname = 'mouseup';
 
-        const touching = event.name === 'touchstart';
+        const touching = event.type === 'touchstart';
 
         if (touching) {
             movename = 'touchmove';
@@ -219,13 +219,10 @@ class GreenAudioPlayer {
                 handleMethod = this.currentlyDragged.dataset.method;
             }
 
-            const listener = ev => this[handleMethod](ev);
-
-            window.addEventListener(movename, listener, false);
 
             let wasPlayingWhenDragStarted = false;
-            const draggingSlider = this.currentlyDragged &&
-              this.currentlyDragged.parentElement.parentElement === this.sliders[0];
+            const draggingSlider = this.currentlyDragged
+              && this.currentlyDragged.parentElement.parentElement === this.sliders[0];
 
             if (draggingSlider) {
                 wasPlayingWhenDragStarted = !this.player.paused;
@@ -235,18 +232,28 @@ class GreenAudioPlayer {
             }
 
             // The "up" listener has to remain inlined because it needs to reference the
-            // listener we created just above.
+            // listeners we're making in this event handler method.
             // otherwise we can't as easily (and safely) remove it when we stop dragging.
             // also it lets us access our initial state when we started dragging.
-            window.addEventListener(upname, () => {
+            // we nee
+            const moveListener = ev => this[handleMethod](ev);
+            const upListener = () => {
+                // do these first in case something else blows up, the player will
+                // keep operating mostly as-expected.
+                window.removeEventListener(movename, moveListener, false);
+                window.removeEventListener(upname, upListener, false);
+
+                // stop tracking the element we are dragging
+                delete this.currentlyDragged;
+
+                // resume playback if we were playing when we started dragging
                 if (draggingSlider && wasPlayingWhenDragStarted) {
                     this.player.play();
                 }
+            };
 
-                this.currentlyDragged = false;
-
-                window.removeEventListener(movename, listener, false);
-            }, false);
+            window.addEventListener(movename, moveListener, false);
+            window.addEventListener(upname, upListener, false);
         }
     }
 
